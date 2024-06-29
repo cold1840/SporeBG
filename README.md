@@ -1,0 +1,2 @@
+# SporeBG
+Spore BoardGame
