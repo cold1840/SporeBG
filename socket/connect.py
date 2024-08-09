@@ -13,8 +13,13 @@ class ClientObj():#a class for server to manage client
 		self.id=None
 		self.name='Unknown'
 		self.statue='init'
-	def fileno(self,*args,**kwrgs):
-		return self.socket.fileno()
+	def login(self,iden:str):
+		self.id=iden
+	def sockName(self):
+		return self.socket.getpeername()
+	def new_wantGame(self,setting:dict)->None:
+		self.statue='wantGame'
+		self.wantGame_setting=setting
 class ClientObjs(list):
 	def __init__(self,*args,**kwrgs):
 		list.__init__(self,*args,**kwrgs)
@@ -24,6 +29,17 @@ class ClientObjs(list):
 		for i in self:
 			if i.socket is socketObj:
 				self.remove(i)
+	def objBySocket(self,socketObj):
+		for i in self:
+			if i.socket is socketObj:
+				return i
+		return ClientObj(socketObj)
+	def wantGame(self,setting:dict)->ClientObj:#对用户进行匹配查找
+		for i in self:
+			if i.start=='wantGame' and
+			i.wantGame_setting['gameMode']==setting['gameMode']:
+				return i
+		return None
 
 
 		
@@ -43,12 +59,50 @@ waitGame	client is glad to join any game avaliable, give it
 class GameOnS():# game on server, 
 	def __init__(self,player1,player2):
 		self.p1,self.p2=player1,player2
+class UsersOnS():# 用于服务端账号管理的类数据库接口
+	FILEPATH='userData.ons'
+	def __init__(self):
+		self.jdata=self.readFile()
+	def __str__(self):
+		return f'<database obj work on file {self.FILEPATH}>'
+	def readFile(self)->dict:
+		try:
+			with open(self.FILEPATH,'r') as f:
+				jmsg = json.loads(f.read())
+			return jmsg
+		except FileNotFoundError:
+			print('不存在数据库文件 创建新数据库')
+			return self.newFile()
+		print('数据库文件异常')
+		return {}
+	def newFile(self)->dict:#创建新的数据文件
+		jmsg = {'version':VERSION,
+		'data':[{'id':'admin','pw':'admin','goal':10},
+			{'id':'1001','pw':'password','goal':0}]}
+		with open(self.FILEPATH,'w') as f:
+			f.write(json.dumps(jmsg))
+		return jmsg
+	def jobj(self)->dict:#获取数据库中json数据
+		return self.jdata
+	def newUser(self,iden:str,pw:str)->dict:
+		self.jdata['data'].append({'id':iden,'pw':pw,'goal':0})
+		return self.jdata
+	def login(self,iden:str,pw:str)->bool:
+		for i in self.jdata['data']:
+			if i['id']==iden and i['pw']==pw:
+				return True
+		return False
 
-class Server():
+
+class Server():#用于实现底层的非阻塞服务端框架
 	def __init__(self,ipot=server_ipot,maxuser=server_maxuser):#ipot means (ip_address,port)
 		self.ipot=ipot
 		self.maxuser=maxuser
-	def process(self,sock:socket,data:str):#a 'helloWorld'
+	def process(self,sock:socket,data:str):
+		'''
+		Server收到已连接客户端发来的数据时调用 在其中编写服务端更高层次的回应方法
+		'''
+		#留出的端口 具体实现应该在子类上 所以下面 is a 'helloWorld'
 		# 处理接收到的数据
 		print(f'Received data {sock}:', data)
 		print('Statue:', self.client_statues[sock])
@@ -91,7 +145,8 @@ class Server():
 				# 现有连接有数据到达
 				data = sock.recv(1024)
 				if data:
-					self.process(sock,data.decode())
+					cobj = self.clients.objBySocket(sock)#通过socket获取对应ClientObj对象
+					self.process(cobj,data.decode())
 				else:
 					# 如果没有数据，则可能是客户端断开了连接
 					print('Client disconnected', sock.getpeername())
@@ -100,30 +155,73 @@ class Server():
 					self.clients.removeBySocket(sock)
 					sock.close()
 	@classmethod
-	def verSpportIf(cls,version):# version is int
+	def verSpportIf(cls,version:int):# 用于服务端判定 是否能够为客户端提供版本支持
 		return version==VERSION
 class BGServer(Server):# with the SporeBG
 	def __init__(self,*args,**kwrgs):
 		Server.__init__(self,*args,**kwrgs)
 		self.games=[]
-	def process(self,sock:socket,data:str):
-		sock.send(self.versionCheck(data).encode())
-		
-	def versionCheck(self,data:str) -> str:
-		version=json.loads(data)['version']
-		msg = json.dumps({
+	def start(self):#在Server的基础上 添加数据库初始连接
+		Server.start(self)
+		print('服务端启动，版本号',VERSION)
+		self.db = UsersOnS()#database
+		print('连接数据库',self.db)
+	def process(self,cobj:ClientObj,data:str):
+		jmsg=json.loads(data)
+		mode = jmsg['mode']
+		def send(jdata:dict):
+			cobj.socket.send(json.dumps(jdata).encode())
+		if mode=='versionCheck':
+			send(self.versionCheck(jdata=jmsg))
+		elif mode=='login':
+			send(self.login(cobj=cobj,jdata=jmsg))
+		elif mode=='wantGame':
+			send(self.wantGame(cobj=cobj,jdata=jmsg))
+	def versionCheck(self,jdata:dict) -> dict:
+		version=jdata['version']
+		msg = {
 			'mode':'versionCheck',
 			'version':VERSION,
-			'verResult':self.verSpportIf(version)})
+			'verResult':self.verSpportIf(version)}
 		return msg
+	def login(self,cobj:ClientObj,jdata:dict)->dict:
+		iden = jdata['id']
+		pw = jdata['pw']
+		result = self.db.login(iden,pw)#交给数据库校验账号密码是否正确
+		if result:
+			cobj.login(iden)#向ClientObj提交已登录信息，将其绑定到账户
+			print('用户登录',iden,cobj.sockName())
+		return {'mode':'login','loginResult':result}
+	def wantGame(self,cobj:ClientObj,jdata:dict)->dict:
+		setting = jdata['setting']
+		aimCobj = self.clients.wantGame(setting)#查找已正等待匹配的客户端
+		if aimCobj:#直接匹配成功
+			return {'mode':'wantGame',
+			'setting':setting,
+			'wantGameResult':aimCobj.id if aimCobj.id else 'Unknown'}#返回对方用户名
+		cobj.new_wantGame(setting)#注册新的匹配等待 使当前客户端进入匹配等待状态
+		return {'mode':'wantGame',
+		'setting':setting,
+		'wantGameResult':''}
+
+
+
+		
+		
+
+
+
+
+
+
 
 class Client():
 	def __init__(self,ipot=server_ipot):
 		self.ipot=ipot
 		self.statue='init'
-	def act(self,data:str):#阻塞式向服务器发送数据并等待回应
+	def act(self,data:str)->str:#阻塞式向服务器发送数据并等待回应
 		self.client_socket.send(data.encode())
-		return self.client_socket.recv(1024)
+		return self.client_socket.recv(1024).decode()
 	def start(self,ipot=None):
 		if ipot==None:
 			ipot=self.ipot
@@ -135,22 +233,41 @@ class Client():
 class BGClient(Client):
 	def __init__(self,*args,**kwrgs):
 		Client.__init__(self,*args,**kwrgs)
-	def go(self,ipot=None):#入口
-		self.start(ipot)
+		self.id=None
+	def actJson(self,j:dict)->dict:# 和self.act相似 但接受并返回字典(通过json)数据
+		return json.loads(self.act(json.dumps(j)))
+	def start(self,ipot=None):#入口
+		Client.start(self,ipot)
 		self.versionCheck()
-	def actJson(self,j:dict)->dict:
-		return json.loads(self.act(json.dumps(j)).decode())
-	def versionCheck(self):
+		#self.login(iden='admin',pw='admin')
+	def login(self,iden:str,pw:str)->bool:
+		print('正在登陆',iden)
+		react = self.actJson({'mode':'login','id':iden,'pw':pw})
+		result = react['loginResult']
+		if result:
+			self.id=iden
+			print('成功登陆',iden)
+		else:
+			print('登陆失败')
+		return result
+	def versionCheck(self)->None:
 		sendjson={'mode':'versionCheck', 'version':VERSION}
 		#msg = json.dumps(sendjson)
-		#react = json.loads(self.act(msg).decode())
+		#react = json.loads(self.act(msg))
 		react = self.actJson(sendjson)
 		print('服务器版本号',react['version'])
 		if react['verResult']:
 			print('服务器支持该版本')
+	def wantGame(self)->None:#阻塞式等待服务器提供可加入的游戏
+		sendjson={'mode':'wantGame','setting':{'gameMode':'amuse'}}
+		print('尝试匹配...')
+		react = self.actJson(sendjson)#进入匹配模式
 
 if __name__=='__main__':
 	s=BGServer()
 	s.start()
 	while True:
-		s.run()
+		try:
+			s.run()
+		except Exception as e:
+			print(e)

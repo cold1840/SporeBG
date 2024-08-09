@@ -2,4 +2,7 @@
 from connect import *
 
 c=BGClient()
-c.go()
+c.start()
+iden = input('账号 ')
+pw = input('密码 ')
+c.login(iden,pw)
