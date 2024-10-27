@@ -92,6 +92,61 @@ class GameEG_pygame(GameEG):
 		self.click_i((mx,my))
 
 
+class GameEG_pygame_port(GameEG_pygame):# 外接端口
+	def __init__(self,GShape,ScrRect,scr):
+		GameEG_pygame.__init__(self,GShape,ScrRect,scr)
+		self.player1_able=True
+		self.player2_able=True
+	def player1Enable(self):
+		self.player1_able=True
+	def player1Unable(self):
+		self.player1_able=False
+	def player2Enable(self):
+		self.player2_able=True
+	def player2Unable(self):
+		self.player2_able=False
+	def playerAbleIf(self,player=None):
+		if player==None:
+			player=self.player_now
+		if player==1:
+			return self.player1_able
+		elif player==2:
+			return self.player2_able
+		return False
+	def render(self):# 内部渲染并返回画面(pygame.Surface)
+		self.sur.fill(self.CP.BG)
+		for dy in range(self.H):
+			for dx in range(self.W):
+				dn=self.fieldget((dx,dy))
+				dp=(dx,dy)
+				if dn==1:
+					if dp==self.step_from and self.playerAbleIf(1):
+						self.drawblock(dp,self.CP.FROM_1)
+					else:
+						self.drawblock(dp,self.CP.PLAYER1)
+				if dn==2:
+					if dp==self.step_from and self.playerAbleIf(2):
+						self.drawblock(dp,self.CP.FROM_2)
+					else:
+						self.drawblock(dp,self.CP.PLAYER2)
+		if self.step_from!=None:
+			for i in self.allow_pick(self.step_mode,self.step_from):
+				if self.playerAbleIf():
+					self.drawallow(i)
+		return self.sur
+	def draw(self,sur=None):
+		if sur==None:
+			sur=self.render()
+		self.scr.blit(sur,(self.SX,self.SY))
+
+	def click(self,posi):# 重写click以实现禁用玩家操作
+		if not rectIf(posi,self.ScrRect()) or not self.playerAbleIf():
+			return
+		mx=posi[0]-self.SX
+		my=posi[1]-self.SY
+		self.click_i((mx,my))
+
+
 def main():
 	pygame.init()
 	scr=pygame.display.set_mode((800,600))
@@ -121,6 +176,7 @@ def main():
 		scr.blit(pygame.font.SysFont('SimHei', 36).render(f'{count(g.germs_u)} 单位',True,(255,255,255)),(10,60))
 		scr.blit(pygame.font.SysFont('SimHei', 36).render(f'{len(g.germs_e)} 菌落',True,(255,255,255)),(630,330))
 		scr.blit(pygame.font.SysFont('SimHei', 36).render(f'{count(g.germs_e)} 单位',True,(255,255,255)),(630,370))
+		scr.blit(pygame.font.SysFont('SimHei', 36).render(f'{g.player_now}',True,(255,255,255)),(630,570))
 		scr.blit(pygame.font.SysFont('SimHei', 36).render(t,True,(255,255,255)),(10,160))
 		pygame.display.update()
 
